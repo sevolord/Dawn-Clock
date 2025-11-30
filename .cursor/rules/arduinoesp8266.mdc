@@ -1,0 +1,248 @@
+---
+alwaysApply: false
+---
+# Cursor Rules for ESP8266 Arduino Development
+
+## Project Overview
+You are assisting with Arduino projects using the ESP8266 microcontroller and the ESP8266 Arduino library. This is for IoT, embedded systems, and hardware automation projects.
+
+## Core Principles
+
+### 1. ESP8266 Specifics
+- **Platform**: Wemos D1 Mini, NodeMCU, or generic ESP8266 boards
+- **Framework**: Arduino IDE with ESP8266 board package (version 3.0+)
+- **Memory Constraints**: 
+  - Flash: 4MB typical (1MB available for SPIFFS/LittleFS)
+  - RAM: 160KB total (80KB usable for sketches)
+  - Optimize for memory: avoid large strings, use `PROGMEM` for constants
+- **Power**: 3.3V logic (NOT 5V tolerant)
+- **Speed**: 80/160 MHz clock configurable
+
+### 2. Code Quality Standards
+- Use **C++11** features where appropriate
+- Always declare variables with appropriate scope
+- Use `const` and `static` liberally
+- Memory-critical: prefer pointers, avoid unnecessary copies
+- Include bounds checking for arrays and buffers
+- Add comments for non-obvious logic, especially timing-sensitive code
+
+### 3. Libraries & Dependencies
+**Essential Libraries:**
+- `ESP8266WiFi.h` - WiFi connectivity
+- `ESP8266WebServer.h` - Web server (if needed)
+- `SPIFFS.h` or `LittleFS.h` - File system
+- `ArduinoOTA.h` - Over-the-air updates
+- `time.h` - Time functions with NTP
+
+**Common Third-Party:**
+- `PubSubClient` - MQTT (IoT projects)
+- `ArduinoJson` - JSON parsing (memory-efficient variant)
+- `WiFiManager` - WiFi provisioning UI
+- `Ticker` - Software timers
+- `OneWire`, `DHT` - Sensor libraries
+
+Always specify library versions in comments when non-standard.
+
+### 4. Pin Configuration
+- **Digital I/O**: D0-D8 (GPIO0-GPIO16, with special functions)
+  - D0 (GPIO16): No PWM, wake from sleep only
+  - D1 (GPIO5): SCL for I2C, avoid if using I2C
+  - D2 (GPIO4): SDA for I2C, avoid if using I2C
+- **Analog**: A0 single pin (0-1V input, use voltage divider for higher)
+- **SPI**: D5 (CLK), D6 (MISO), D7 (MOSI), D8 (CS)
+- **Serial**: RX=D3, TX=D4 (also on separate UART pins)
+- **PWM**: All digital pins except D0
+- **Interrupts**: All GPIO pins support external interrupts
+
+### 5. Naming Conventions
+```
+// Pins
+const uint8_t PIN_LED = D4;
+const uint8_t PIN_BUTTON = D3;
+
+// WiFi/Network
+const char* WIFI_SSID = "NetworkName";
+const char* WIFI_PASSWORD = "password";
+
+// Constants (PROGMEM for strings if memory-critical)
+const char DEVICE_NAME[] PROGMEM = "ESP8266_Device";
+
+// Functions
+void connectToWiFi();
+bool readSensorData();
+void handleWebRequest();
+```
+
+### 6. Memory Optimization
+- **String literals**: Use `F()` macro or `PROGMEM` for constants
+  ```cpp
+  Serial.println(F("This string stays in flash"));
+  const char text[] PROGMEM = "Another flash string";
+  ```
+- **JSON**: Use ArduinoJson `StaticJsonDocument` over `DynamicJsonDocument` when size is predictable
+- **Buffers**: Keep them on stack or allocate once in `setup()`
+- **Avoid**: Large arrays, deep recursion, unnecessary string concatenation
+
+### 7. WiFi & Networking
+- **Connection**: Always implement timeout and reconnection logic
+  ```cpp
+  unsigned long wifiTimeout = millis() + 20000; // 20 second timeout
+  while (WiFi.status() != WL_CONNECTED && millis() < wifiTimeout) {
+    delay(500);
+  }
+  ```
+- **Sleep Modes**: Use `ESP.deepSleep()` to save power (wakes on timer or pin)
+  ```cpp
+  // Sleep for 10 minutes
+  ESP.deepSleep(10 * 60 * 1e6); // microseconds
+  ```
+- **OTA Updates**: Secure with password, implement in `setup()`:
+  ```cpp
+  ArduinoOTA.setPassword("OTA_PASSWORD");
+  ArduinoOTA.begin();
+  ```
+
+### 8. Timing & Interrupts
+- **Avoid**: `delay()` in interrupt handlers (use flags instead)
+- **Prefer**: `millis()` for timing, `Ticker` library for precise intervals
+  ```cpp
+  Ticker ticker;
+  void onTick() {
+    // Non-blocking, max ~1ms
+  }
+  ticker.attach(1.0, onTick); // Call every 1 second
+  ```
+- **Critical Section**: Disable interrupts for shared variable access
+  ```cpp
+  noInterrupts();
+  // Access shared variables
+  interrupts();
+  ```
+
+### 9. Serial Communication
+- **Default Baud**: 115200 bps for debug
+- **Begin early**: `Serial.begin(115200);` in `setup()`
+- **Print format**:
+  ```cpp
+  Serial.printf("Voltage: %.2f V\n", voltage);
+  Serial.print(F("Starting WiFi...\n"));
+  ```
+
+### 10. Hardware Configuration
+- **Decoupling**: Add 100nF capacitor near ESP8266 power pins
+- **Voltage Divider**: For ADC (A0 max 1V), use 1M + 330K resistor divider for 3.3V sources
+- **Reset**: Typically auto-managed, but add capacitor (100nF) for stability
+- **GPIO Levels**: All outputs are 3.3V; use level shifter if interfacing with 5V devices
+
+### 11. Common Patterns
+
+#### WiFi Reconnection
+```cpp
+void setup() {
+  WiFi.mode(WIFI_STA);
+  connectToWiFi();
+}
+
+void loop() {
+  if (WiFi.status() != WL_CONNECTED) {
+    connectToWiFi();
+  }
+  ArduinoOTA.handle();
+  // Your code here
+}
+
+void connectToWiFi() {
+  Serial.printf("Connecting to %s\n", WIFI_SSID);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) {
+    delay(500);
+    Serial.print(".");
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("\nConnected! IP: %s\n", WiFi.localIP().toString().c_str());
+  } else {
+    Serial.println("\nFailed to connect");
+  }
+}
+```
+
+#### SPIFFS/LittleFS File Access
+```cpp
+#include <LittleFS.h>
+
+void setup() {
+  if (!LittleFS.begin()) {
+    Serial.println("LittleFS mount failed");
+    return;
+  }
+}
+
+void readConfig() {
+  File f = LittleFS.open("/config.json", "r");
+  if (!f) {
+    Serial.println("File not found");
+    return;
+  }
+  String content = f.readString();
+  f.close();
+  // Parse JSON...
+}
+```
+
+### 12. Debugging & Troubleshooting
+- **Enable debug output**: Tools → Debug Port/Level in Arduino IDE
+- **Check SPIFFS space**: `FSInfo fs_info; LittleFS.info(fs_info);`
+- **Monitor stack**: Use `ESP.getFreeHeap()` regularly
+- **Serial monitor**: Set baud to 115200
+- **Common issues**:
+  - **Brownout**: Weak power supply → add capacitor, use better PSU
+  - **Reboots**: Stack overflow → reduce buffer sizes, enable stack trace
+  - **WiFi fails**: Signal weak → check antenna, increase timeout
+
+### 13. Optimization Checklist
+- [ ] Use `F()` macro for all serial debug strings
+- [ ] Use `PROGMEM` for large constant tables
+- [ ] Implement power-saving (sleep modes for battery devices)
+- [ ] Profile heap usage with `ESP.getFreeHeap()`
+- [ ] Use `StaticJsonDocument` with appropriate size
+- [ ] Minimize global variables
+- [ ] Test OTA updates work correctly
+- [ ] Implement WiFi reconnection with exponential backoff
+
+### 14. File Structure
+```
+project/
+├── project.ino          # Main sketch (or src/main.cpp)
+├── config.h             # Configuration (WiFi, pins, constants)
+├── sensors.h/.cpp       # Sensor abstraction
+├── network.h/.cpp       # WiFi/MQTT functions
+├── data/                # SPIFFS files (if using LittleFS upload)
+└── .cursorrules         # This file
+```
+
+### 15. Safety & Best Practices
+- **Always validate input**: Especially from web requests or sensors
+- **Timeout operations**: WiFi, HTTP requests, file reads
+- **Protect credentials**: Store WiFi password securely (consider WPA2 Enterprise)
+- **Watchdog**: Consider enabling watchdog timer for critical applications
+- **Update frequency**: Implement smart update checks to avoid excessive reboots
+
+## When to Ask for Help
+- Complex sensor integration (multitasking different interfaces)
+- Performance optimization for memory-critical code
+- Debugging mysterious reboots or heap corruption
+- Network protocol implementation (MQTT, CoAP, etc.)
+- Hardware-specific issues (pins, power budgets)
+
+## Useful Resources
+- ESP8266 Community Forum: https://github.com/esp8266/Arduino
+- Library Repository: https://github.com/esp8266
+- Datasheet: Search "ESP8266EX datasheet"
+- Memory Analysis: Use Arduino IDE's "Sketch → Analyze Sketch"
+
+---
+*Last Updated: November 2025*
+*ESP8266 Arduino Library 3.0+*
